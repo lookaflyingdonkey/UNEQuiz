@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Quiz App</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Nice Quiz Viewer for COMP280 @ UNE">
+    <meta name="author" content="Dean Collins">
+
+    <!-- Le styles -->
+	<!-- Latest compiled and minified CSS -->
+	<link href="http://netdna.bootstrapcdn.com/twitter-bootstrap/2.3.2/css/bootstrap-combined.min.css" rel="stylesheet">
+ 
+	<!-- Latest compiled and minified JavaScript -->
+	<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script>
+	<script src="http://netdna.bootstrapcdn.com/twitter-bootstrap/2.3.2/js/bootstrap.min.js"></script>
+	
+	<style type="text/css">
+      body {
+        padding-top: 60px;
+        padding-bottom: 40px;
+      }
+      .sidebar-nav {
+        padding: 9px 0;
+		width: 310px;
+      }
+	  
+	  .sidebar-clock {
+		  font-size: 36px;
+		  text-align: center;
+		  width: 270px;
+	  }
+
+      @media (max-width: 980px) {
+        /* Enable use of floated navbar text */
+        .navbar-text.pull-right {
+          float: none;
+          padding-left: 5px;
+          padding-right: 5px;
+        }
+      }
+	  
+	  .quiz-area .question > strong { display: block; margin-bottom: 10px; }
+#	  .quiz-area .question > strong span { font-size: 14px; margin-right: 10px; }
+    </style>
+	
+	<script>
+		var app = {
+			quizzes: []
+		};
+		$(document).ready(function(){
+			
+			// Sticky Sidebar
+			$('.sticky').affix();
+			  
+			// Button events
+			$('#loadQuizzes').click(function() {
+				app.loadQuizzes();
+				return false;
+			});
+			
+			$('.sidebar-nav').delegate('.quiz-link', 'click', function(obj) {
+				var quiz_link = $(obj.currentTarget);
+				// get the quiz object
+				var quiz = app.quizzes[$('a', quiz_link).data('quiz-id')];
+				// Make sure the quiz is active
+				if(!quiz.active) {
+					alert('Sorry, this quiz isn\'t active yet');
+					return;
+				}
+				if(!confirm('Are you sure you are ready to start this quiz? You will only have ' + quiz.duration + ' minutes to complete it!')) {
+					return;
+				}
+				// Hide Hero
+				$('.hero-unit').slideUp();
+				// Remove any other active tags
+				$('.quiz-link.active').removeClass('active');
+				$(quiz_link).addClass('active');
+				app.loadQuiz(quiz);
+				
+				return false;
+			});
+			
+			// Catch form submits and do it over ajax
+			$('.quiz-area').delegate('form', 'submit', function(obj) {
+				var form = $(obj.currentTarget);
+				
+				// Stop timer
+				clearInterval(window.timer);
+				
+				// Send data to proxy
+				$.post($(form).attr('action'), $(form).serialize(), function(data) {
+					$('#results').html(data);
+					app.processResults();
+				});
+				return false;
+			});
+			
+			app.loadQuizzes = function() {
+				// Reset quiz list
+				app.quizzes = [];
+				$('.sidebar-nav .quiz-link').slideUp();
+				$('#index').load('/proxy.php?action=load_quizzes', function(){
+					$('#index h3').each(function() {
+						var _this = $(this);
+						var a = $('a', _this);
+						var quiz = {
+							topic: '',
+							url: '',
+							submit_url: '',
+							duration: 0,
+							active: false,
+							questions: []
+						};
+						var topic = _this.text();
+						if(a.length == 0) {
+							quiz.topic = $.trim(topic.substring(topic.indexOf('.')+1, topic.indexOf('(')));
+						} else {
+							quiz.active = true;
+							quiz.topic = $.trim(a.text());
+							quiz.url = a.attr('href');
+						}
+						quiz.duration = $.trim(topic.substring(topic.indexOf('(')+1, topic.indexOf(' ', topic.indexOf('('))));
+						if(!isNaN(quiz.duration)) {
+							app.quizzes.push(quiz);
+						}
+					});
+					app.drawQuizSidebar();
+				});
+			}
+			
+			app.drawQuizSidebar = function() {
+				for(var i in app.quizzes) {
+					console.log(app.quizzes[i]);
+					// get the quiz object
+					var quiz = app.quizzes[i];
+					var quiz_li = $('<li/>').addClass('quiz-link');
+					var quiz_link = $('<a/>').attr('href', '#').data('quiz-id', i).data('active', quiz.active).data('url', quiz.url).text((i*1+1) + ' . ' + quiz.topic);
+					quiz_link.append(' <span class="badge badge-success">'+quiz.duration+' min(s)</span>');
+					if(!quiz.active) {
+						quiz_link.addClass('muted');
+					}
+					quiz_li.append(quiz_link);
+					$('.sidebar-nav .nav').append(quiz_li);
+				}
+			}
+			app.loadQuiz = function(quiz) {
+				$('#quiz').load('/proxy.php?action=load_quiz&quiz=' + quiz.url, function() {
+					quiz.questions = [];
+					var quiz_data = $('#quiz').html();
+					var position = 0;
+				
+					quiz.submit_url = quiz_data.substring(quiz_data.indexOf('submitquiz.cgi'), quiz_data.indexOf("\"", quiz_data.indexOf('submitquiz.cgi')));
+				
+					while(quiz_data.indexOf('<br><hr><br><b>', position) != -1) {
+						var question = {
+							number: 0,
+							question_text: '',
+							type: '', // This is either 'multi' or 'text'
+							form_name: '',
+							answers: [],
+							marks: 0
+						};
+						position = quiz_data.indexOf('<br><hr><br><b>', position) + 15;
+						position = quiz_data.indexOf('Question', position) + 8;
+						question.number = $.trim(quiz_data.substring(position, quiz_data.indexOf(':', position))) * 1;
+						position = quiz_data.indexOf(':', position);
+						position = quiz_data.indexOf('</b>', position) + 4;
+					
+						question.question_text = $.trim(quiz_data.substring(position, quiz_data.indexOf('<br>', position)));
+						position = quiz_data.indexOf('<br>', position) + 4;
+					
+						// Get the number of marks for that question
+						var tmp_text = question.question_text.split("").reverse().join("");
+						tmp_text = tmp_text.substring(0, tmp_text.indexOf('['));
+						tmp_text = tmp_text.split("").reverse().join("");
+						tmp_text = tmp_text.replace(/[^\d.]/g, "");
+						question.marks = tmp_text * 1;
+					
+						// Trim the marks out of the question text
+						question.question_text = $.trim(question.question_text.substring(0, question.question_text.lastIndexOf('[')));
+						if(question.question_text.indexOf('<input') != -1) {
+							question.type = 'text';
+						} else {
+							question.type = 'multi';
+						}
+					
+						if(question.type == 'multi') {
+							var next_question = quiz_data.indexOf('<br><hr><br><b>', position);
+							var last_position = position;
+							position = quiz_data.indexOf('<input', position);
+							while(position < next_question) {
+								last_position = position;
+								var ans_obj = $(quiz_data.substring(position, quiz_data.indexOf('<br>', position)) + '</input>');
+								position = quiz_data.indexOf('<br>', position) + 4;
+								var answer = {
+									answer_text: $.trim(ans_obj.text()),
+									name: ans_obj.attr('name'),
+									value: ans_obj.val()
+								};
+								position = quiz_data.indexOf('<input', position);
+								question.answers.push(answer);
+							
+							}
+							if(position > next_question) position = last_position;
+						}
+					
+						quiz.questions.push(question);
+					}
+					app.drawQuiz(quiz);
+				});
+			}
+			
+			app.drawQuiz = function(quiz) {
+				$('.quiz-area').empty().append($('<h3/>').text(quiz.topic));
+				var form = $('<form/>').attr('action', 'proxy.php?action=submit&quiz=' + quiz.submit_url).attr('method', 'post');
+				for(var q in quiz.questions) {
+					var question = quiz.questions[q];
+					var html = $('<div/>').addClass('question');
+					html.append($('<strong/>').html(question.question_text).prepend($('<span/>').text(question.number + '.')));
+					if(question.type == 'multi') {
+						for(var a in question.answers) {
+							var answer = question.answers[a];
+							var radio = $('<input/>').attr('type', 'radio').val(answer.value).attr('name', answer.name);
+							if(answer.value == '99') {
+								radio.css('visibility', 'hidden');
+								radio.attr('selected', 'selected');
+								html.append(radio);
+							} else {
+								html.append($('<label class="radio">').append(radio).append(answer.answer_text));
+							}
+							
+						}
+					}
+					html.append('<hr/>');
+					form.append(html);
+				}
+				form.append($('<div class="form-actions"/>').append('<button type="submit" class="btn btn-primary">Submit</button>'));
+				$('.quiz-area').append(form);
+				
+				window.time = (quiz.duration * 60) - 1;
+				window.timer = setInterval(function() {
+					window.time--;
+					if(window.time <= 0) {
+						clearInterval(window.timer);
+						window.time = 0;
+						$('.sidebar-clock').text('TIMES UP!!');
+						// Disabled row below as you should still be allowed to submit quiz
+						//$('.form-actions .btn').attr('disabled', 'disabled');
+						return;
+					}
+					var secs = window.time % 60;
+					var mins = (window.time - secs) / 60;
+					if(secs < 10) secs = '0' + secs;
+					if(mins < 10) mins = '0' + mins;
+					$('.sidebar-clock').text(mins + ':' + secs);
+					if(window.time < 20) $('.sidebar-clock').css('color', '#c09853').css('background-color', '#fcf8e3');
+					if(window.time < 10) $('.sidebar-clock').css('color', '#b94a48').css('background-color', '#eed3d7');
+				}, 1000);
+			}
+			
+			app.processResults = function() {
+				// @todo: Process the results a bit more and link through to textbook sections and workshops
+				$('.quiz-area').html($('#results h3').first().html());
+			}
+		});
+	</script>
+		
+    <!-- HTML5 shim, for IE6-8 support of HTML5 elements -->
+    <!--[if lt IE 9]>
+      <script src="http://html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+
+  <body>
+
+      <div class="navbar navbar-inverse navbar-fixed-top">
+        <div class="navbar-inner">
+          <div class="container-fluid">
+            <a class="brand" href="#">UNE Comp 280 Quiz App</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="container-fluid">
+        <div class="row-fluid">
+          <div class="span3">
+			  <div class="sticky">
+	            <div class="well sidebar-nav">
+	              <ul class="nav nav-list">
+	                <li class="nav-header">UNE Links</li>
+	                <li><a href="http://moodle.une.edu.au/course/view.php?id=6593">COMP 280 Moodle</a></li>
+	                <li><a href="http://www.une.edu.au">UNE Website</a></li>
+	                <li class="quiz-header nav-header">Quizzes</li>
+	              </ul>
+	            </div>
+	            <div class="well sidebar-clock">
+					--:--
+	            </div>
+			</div>
+          </div>
+          <div class="span9">
+            <div class="hero-unit">
+              <h1>Hello there!</h1>
+              <p>This is a little sample JS app that will allow you to complete COMP 280 Quizzes in style and without risk of clicking back or refresh ;-). You will need to be logged into your UNE account and have signed into turing.</p>
+			  <p>NOTE: This is run in your browser only and no details are transmitted anywhere but the UNE servers, you can check the code yourself if you wish. This simply loads the quiz from the turing server, makes it look nice, lets you fill it out and then POSTs it back to the turing server...</p>
+              <p><a href="#" class="btn btn-primary btn-large" id="loadQuizzes">Load Quizzes &raquo;</a></p>
+            </div>
+			<div class="quiz-area">
+			</div>
+          </div><!--/span-->
+        </div><!--/row-->
+
+        <hr>
+
+        <footer>
+          <p>Anyone and everyone is free to change or distribute this as they see fit</p>
+        </footer>
+
+      </div><!--/.fluid-container-->
+
+	  <div id="index" style="display: none;"></div>
+	  <div id="quiz" style="display: none;"></div>
+	  <div id="results" style="display: none;"></div>
+    </body>
+</html>
